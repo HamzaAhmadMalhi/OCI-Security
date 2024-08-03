@@ -1,0 +1,59 @@
+#!/bin/bash
+# Output directory and CSV file
+
+output_dir="/home/Dir_of_choice"
+csv_file="$output_dir/OS_Management.CSV"
+
+# Ensure output directory exists
+mkdir -p "$output_dir" || { echo "Failed to create output directory $output_dir"; exit 1; }
+
+# Run Command 2 and store the output in a variable
+echo "Running Command 2..."
+compartment_info=$(oci iam compartment list --compartment-id ocid1.compartment... --all) || { echo "Failed to fetch compartment info"; exit 1; }
+
+# Initialize CSV file with headers
+echo "Compartment ID,Compartment Name,Work Request ID,Description,Status,Time Accepted,Message,Percentage Complete,Instance Name,Instance ID" > "$csv_file"
+
+# Extract compartment IDs and loop through each one
+echo "$compartment_info" | jq -r '.data[] | [.id, .name] | @tsv' | while IFS=$'\t' read -r compartment_id compartment_name; do
+    # Run Command 1 with the current compartment ID and store the output
+    echo "Running Command 1 for compartment '$compartment_name' (ID: $compartment_id)"
+    #Change the Time accepted Format yyyy-mm-dd
+    command1_output=$(oci os-management work-request list --compartment-id "$compartment_id" --query "data[?status!='SUCCEEDED' && 'time-accepted'>'Date']" --all) || { echo "Failed to fetch work request list for compartment '$compartment_name'"; continue; }
+
+        # Check if Command 1 output is empty
+    if [ -z "$command1_output" ]; then
+        echo "No valid data found for compartment '$compartment_name' (ID: $compartment_id). Skipping..."
+        continue
+    fi
+
+    # Process each work request in Command 1 output
+    echo "$command1_output" | jq -r '.[] | [.id] | @tsv' | while IFS=$'\t' read -r work_request_id; do
+
+        # Fetch detailed information for the current work request using Command 2
+        echo "Fetching details for work request ID: $work_request_id"
+        work_request_info=$(oci os-management work-request get --work-request-id "$work_request_id")
+
+        # Extract required fields and append to CSV
+        echo "$work_request_info" | jq -r --arg compartment_id "$compartment_id" --arg compartment_name "$compartment_name" '
+            [
+
+                $compartment_id,
+                $compartment_name,
+                .data.id,
+                .data.description,
+                .data.status,
+                .data."time-accepted",
+                .data.message,
+                .data."percent-complete",
+                .data.resources[0].name,
+                .data.resources[0]."identifier"
+            ] | @csv' >> "$csv_file"
+
+    done
+
+    echo "Completed processing for compartment '$compartment_name' (ID: $compartment_id)"
+
+done
+
+echo "Script completed successfully. CSV file saved at: $csv_file"
