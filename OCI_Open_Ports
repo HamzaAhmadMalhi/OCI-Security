@@ -1,0 +1,49 @@
+#!/bin/bash
+# OCI CLI commands
+compartment_id="ocid1.compartment..."
+
+# Command 1: Get vulnerability scan results
+scan_results=$(oci vulnerability-scanning host scan result port list --compartment-id "$compartment_id" --all --is-latest-only true)
+
+# Specify output CSV file
+output_file="/home/.../open_ports.csv"
+
+# Write CSV header
+echo "id,instance-id,display-name,open-port-count,time-started,ip-address,port,protocol,service,severity" > "$output_file"
+
+# Process each scan result
+for row in $(echo "${scan_results}" | jq -r '.data.items[] | @base64'); do
+    _jq() {
+        echo "${row}" | base64 --decode | jq -r ${1}
+    }
+
+    # Extract necessary fields from command 1
+    id=$(_jq '.id')
+    instance_id=$(_jq '."instance-id"')  # Corrected path for instance-id
+    open_port_count=$(_jq '."open-port-count"')
+    time_started=$(_jq '."time-started"')
+
+    # Get display name for instance_id
+    display_name=$(oci compute instance get --instance-id "${instance_id}" --query 'data."display-name"' --raw-output)
+
+    # Command 2: Get detailed port information for each scan result
+    port_info=$(oci vulnerability-scanning host scan result port get --host-port-scan-result-id "$id")
+
+    # Iterate through each open port and write to CSV
+    for port_row in $(echo "${port_info}" | jq -r '.data."open-ports"[] | @base64'); do
+        _port_jq() {
+            echo "${port_row}" | base64 --decode | jq -r ${1}
+        }
+
+        ip_address=$(_port_jq '.["ip-address"]')
+        port=$(_port_jq '.port')
+        protocol=$(_port_jq '.protocol')
+        service=$(_port_jq '.service')
+        severity=$(_port_jq '.severity')
+
+        # Write to CSV
+        echo "\"$id\",\"$instance_id\",\"$display_name\",\"$open_port_count\",\"$time_started\",\"$ip_address\",\"$port\",\"$protocol\",\"$service\",\"$severity\"" >> "$output_file"
+
+    done
+
+done
