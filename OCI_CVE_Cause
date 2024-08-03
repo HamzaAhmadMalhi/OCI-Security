@@ -1,0 +1,61 @@
+#!/bin/bash
+
+# Run command 1 to get the list of host scan results
+#Change Time-started Format yyyy-mm-ddThh:mm:ssZ
+scan_results=$(oci vulnerability-scanning host scan result agent list --compartment-id ocid1.compartment.oc2... --query 'data.items[?"time-started" > `DATE`]' --all)
+
+# Specify the output CSV file
+output_file="/home/.../cvecause.csv"
+
+# Write the CSV header
+echo "Command,id,cve-reference,cve-fix-version,name,type,version" > "$output_file"
+
+# Array to store processed CVEs for each host scan result ID
+declare -A processed_cves
+
+# Iterate over each scan result
+for row in $(echo "${scan_results}" | jq -r '.[] | @base64'); do
+    _jq() {
+        echo "${row}" | base64 --decode | jq -r ${1}
+    }
+
+    # Extract host scan result ID
+    host_scan_result_id=$(_jq '.id')
+
+    # Initialize array to store processed CVEs if not already initialized
+    if [[ -z "${processed_cves[$host_scan_result_id]+x}" ]]; then
+        processed_cves["$host_scan_result_id"]=""
+    fi
+
+    # Run Command 2 to get detailed vulnerability information
+    vulnerability_info=$(oci vulnerability-scanning host scan result agent get --host-agent-scan-result-id "${host_scan_result_id}")
+
+    # Extract relevant information for each vulnerability
+    for vuln_row in $(echo "${vulnerability_info}" | jq -r '.data.problems[] | @base64'); do
+        _vuln_jq() {
+            echo "${vuln_row}" | base64 --decode | jq -r ${1}
+        }
+
+        # Extract CVE reference
+        cve_reference=$(_vuln_jq '.["cve-reference"]')
+
+        # Check if CVE reference has already been processed for this host scan result ID
+        if [[ "${processed_cves[$host_scan_result_id]}" =~ "$cve_reference" ]]; then
+            continue  # Skip if CVE reference already processed
+        fi
+
+        # Mark CVE as processed for this host scan result ID
+        processed_cves["$host_scan_result_id"]="${processed_cves[$host_scan_result_id]}$cve_reference,"
+
+        # Extract CVE fix version, name, type, and version
+        cve_fix_version=$(_vuln_jq '.["vulnerable-packages"][0]["cve-fix-version"]')
+        name=$(_vuln_jq '.["vulnerable-packages"][0].name')
+        type=$(_vuln_jq '.["vulnerable-packages"][0].type')
+        version=$(_vuln_jq '.["vulnerable-packages"][0].version')
+
+        # Write the formatted output to the CSV file
+        echo "\"Command 2\",\"${host_scan_result_id}\",\"${cve_reference}\",\"${cve_fix_version}\",\"${name}\",\"${type}\",\"${version}\"" >> "$output_file"
+
+    done
+
+done
