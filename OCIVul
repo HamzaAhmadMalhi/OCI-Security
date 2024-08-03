@@ -1,0 +1,67 @@
+#!/bin/bash
+
+# Run vulnerability scanning command without filtering by severity
+#****** REPLACE with your Compartment ******
+vulnerability_output=$(oci vulnerability-scanning vulnerability list --compartment-id ocid1.compartment.... --query "data.items[?state == 'OPEN']" --all)
+
+
+# Specify the output file
+output_file="/home/.../Vul.csv"
+
+# Write the CSV header
+echo "Host ID,Compartment ID,CVE ID,Severity,Vulnerability Reference,Time First Detected,Time Last Detected,CVE Description,Display Name" > "$output_file"
+
+# IteraAte over each vulnerability
+for row in $(echo "${vulnerability_output}" | jq -r '.[] | @base64'); do
+
+
+
+    _jq() {
+        echo "${row}" | base64 --decode | jq -r "${1}"
+    }
+
+    # Extract vulnerability ID
+    vulnerability_id=$(_jq '.id')
+
+    # Run impacted hosts command
+    impacted_hosts_output=$(oci vulnerability-scanning vulnerability list-vulnerability-impacted-hosts --vulnerability-id "${vulnerability_id}" --all)
+
+
+
+    # Extract relevant information for each host
+    for host_row in $(echo "${impacted_hosts_output}" | jq -r '.data.items[] | @base64'); do
+
+
+        _host_jq() {
+
+
+
+            echo "${host_row}" | base64 --decode | jq -r "${1}"
+
+        }
+
+
+        # Extract host ID
+        host_id=$(_host_jq '.["instance-id"]')
+
+
+        # Fetch display name using OCI CLI command
+        display_name=$(oci compute instance get --instance-id "${host_id}" --query 'data."display-name"' --raw-output)
+
+
+        # Extract other relevant information
+        compartment_id=$(_jq '.["compartment-id"]')
+        vulnerability_reference=$(_jq '.id')
+        severity=$(_jq '.severity')
+        cve_id=$(_jq '.["vulnerability-reference"]')
+        time_first_detected=$(_jq '.["time-first-detected"]')
+        time_last_detected=$(_jq '.["time-last-detected"]')
+        cve_description=$(_jq '.["cve-description"]')
+
+        # Replace newline characters and commas in description
+        cve_description=$(echo "${cve_description}" | tr '\n' ' ' | tr -d ',')
+
+        # Write the formatted output to the CSV file
+        echo "\"${host_id:-null}\",\"${compartment_id:-null}\",\"${cve_id:-null}\",\"${severity:-null}\",\"${vulnerability_reference:-null}\",\"${time_first_detected:-null}\",\"${time_last_detected:-null}\",\"${cve_description:-null}\",\"${display_name:-null}\"" >> "$output_file"
+    done
+done
