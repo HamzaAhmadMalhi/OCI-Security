@@ -1,0 +1,51 @@
+#!/bin/bash
+
+# Run OCI Cloud Guard command to list active problems
+problems_output=$(oci cloud-guard problem list --compartment-id ocid1.tenancy... --lifecycle-state ACTIVE --all)
+
+# Specify the output file
+output_file="/home/.../cloud_guard_report.csv"
+
+#Write the CSV header
+echo "Compartment ID,Detector ID,Detector Rule ID,Labels,Lifecycle Detail,Lifecycle State,Region,Resource ID,Resource Name,Resource Type,Risk Level,Target ID,Time First Detected,Time Last Detected,Description,Recommendation" > "$output_file"
+
+# Iterate over each problem
+for row in $(echo "${problems_output}" | jq -r '.data.items[] | @base64'); do
+    _jq() {
+        echo "${row}" | base64 --decode | jq -r ${1}
+    }
+
+    # Extract problem ID
+    problem_id=$(_jq '.id')
+
+    # Run OCI Cloud Guard command to get detailed information about the problem
+    problem_details=$(oci cloud-guard problem get --problem-id "${problem_id}")
+
+    # Extract relevant information
+    compartment_id=$(_jq '.["compartment-id"]')
+    detector_id=$(_jq '.["detector-id"]')
+    detector_rule_id=$(_jq '.["detector-rule-id"]')
+    labels=$(echo $(_jq '.labels') | tr -d '[],"' | tr ' ' '\n' | paste -s -d',' -)
+    lifecycle_detail=$(_jq '.["lifecycle-detail"]')
+    lifecycle_state=$(_jq '.["lifecycle-state"]')
+    region=$(_jq '.region')
+    resource_id=$(_jq '.["resource-id"]')
+    resource_name=$(_jq '.["resource-name"]')
+    resource_type=$(_jq '.["resource-type"]')
+    risk_level=$(_jq '.["risk-level"]')
+    target_id=$(_jq '.["target-id"]')
+    time_first_detected=$(_jq '.["time-first-detected"]')
+    time_last_detected=$(_jq '.["time-last-detected"]')
+
+    # Extract information from problem details
+    description=$(echo "${problem_details}" | jq -r '.data.description // empty')
+    recommendation=$(echo "${problem_details}" | jq -r '.data.recommendation // empty')
+
+    # Replace newline characters with space in description
+    description=${description//$'\n'/ }
+
+    # Write the formatted output to the CSV file
+    echo "\"${compartment_id}\",\"${detector_id}\",\"${detector_rule_id}\",\"${labels}\",\"${lifecycle_detail}\",\"${lifecycle_state}\",\"${region}\",\"${resource_id}\",\"${resource_name}\",\"${resource_type}\",\"${risk_level}\",\"${target_id}\",\"${time_first_detected}\",\"${time_last_detected}\",\"${description}\",\"${recommendation}\"" >> "$output_file"
+
+done
+
