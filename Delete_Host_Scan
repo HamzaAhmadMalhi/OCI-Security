@@ -1,0 +1,67 @@
+#!/bin/bash
+
+# Define the necessary parameters
+# To find the vsshostscanresults go to the console > Host Scans > The Scans with "-" Name go to the "..." menu on the right > Copy OCID
+# **** DO NOT enter the OCID of a compartment still in use **** 
+host_scan_result_ids=(
+    "ocid1.vsshostscanresult...1"
+    "ocid1.vsshostscanresult...2"
+    "ocid1.vsshostscanresult...3"
+    # Add more host_scan_result_id values as needed
+)
+compartment_id="ocid1.compartment..."
+output_file="$HOME/documents/work_requests.txt"
+
+# Ensure the output directory exists
+mkdir -p "$(dirname "$output_file")"
+
+# Initialize output file
+> "$output_file"
+
+# Iterate over each host_scan_result_id
+for host_scan_result_id in "${host_scan_result_ids[@]}"; do
+    echo "Processing host scan result ID: $host_scan_result_id"
+
+    # Step 1: Run Command 1 to get instance-id
+    instance_id=$(oci vulnerability-scanning host scan result agent get --host-agent-scan-result-id $host_scan_result_id --query 'data."instance-id"' --output json)
+    instance_id=$(echo "$instance_id" | jq -r '.')
+
+    if [ -z "$instance_id" ] || [ "$instance_id" == "null" ]; then
+        echo "Failed to retrieve instance-id for $host_scan_result_id"
+        continue
+    fi
+
+    echo "Retrieved instance-id: $instance_id"
+
+    # Step 2: Run Command 2 to get all ids
+    ids=$(oci vulnerability-scanning host scan result agent list --compartment-id $compartment_id --instance-id $instance_id --all --query 'data.items[].id' --output json)
+    ids=$(echo "$ids" | jq -r '.[]')
+
+    if [ -z "$ids" ]; then
+        echo "No ids found for instance-id $instance_id"
+        continue
+    fi
+
+    # Step 3: Loop through all ids and run Command 3
+    for id in $ids; do
+        id=$(echo "$id" | tr -d '"')  # Remove quotes if present
+        if [ -n "$id" ]; then
+            echo "Deleting scan result with id: $id"
+            result=$(oci vulnerability-scanning host scan result agent delete --host-agent-scan-result-id $id --force --output json 2>&1)
+
+            # Extract work request ID from the result
+            work_request_id=$(echo "$result" | jq -r '.["opc-work-request-id"]')
+
+            if [ -n "$work_request_id" ] && [ "$work_request_id" != "null" ]; then
+                echo "$work_request_id" >> "$output_file"
+                echo "Work request ID: $work_request_id saved to $output_file"
+            else
+                echo "Failed to delete scan result with id: $id. Output: $result"
+            fi
+        fi
+    done
+
+    echo "Completed processing for host scan result ID: $host_scan_result_id"
+done
+
+echo "Script completed. Check $output_file for work request IDs."
